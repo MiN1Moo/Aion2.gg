@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body { @apply bg-bg text-slate-200 antialiased; }
+.panel { @apply bg-panel border border-line rounded-lg; }
+.inp { @apply bg-bg border border-line rounded px-2 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-accent; }
+.btn { @apply bg-accent/90 hover:bg-accent text-white rounded px-3 py-1.5 text-sm font-medium transition-colors; }
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible { @apply outline outline-2 outline-accent; }

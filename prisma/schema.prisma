@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RegionKind { GLOBAL KR TW }
+enum Faction { ELYOS ASMODIAN }
+enum RunStatus { RUNNING SUCCEEDED PARTIAL FAILED }
+
+// ---------- Provenance ----------
+model DataSource {
+  id               Int            @id @default(autoincrement())
+  key              String         @unique
+  name             String
+  isMock           Boolean        @default(false)
+  termsUrl         String?
+  permitted        Boolean        @default(false)
+  rateLimitPerMin  Int            @default(30)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(6)
+  runs             IngestionRun[]
+  items            Item[]
+  skills           Skill[]
+}
+
+model IngestionRun {
+  id          Int                 @id @default(autoincrement())
+  sourceId    Int
+  source      DataSource          @relation(fields: [sourceId], references: [id])
+  status      RunStatus           @default(RUNNING)
+  startedAt   DateTime            @default(now()) @db.Timestamptz(6)
+  finishedAt  DateTime?           @db.Timestamptz(6)
+  fetched     Int                 @default(0)
+  created     Int                 @default(0)
+  unchanged   Int                 @default(0)
+  failed      Int                 @default(0)
+  errors      IngestionError[]
+  snapshots   CharacterSnapshot[]
+  @@index([sourceId, startedAt])
+}
+
+model IngestionError {
+  id        Int          @id @default(autoincrement())
+  runId     Int
+  run       IngestionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  scope     String
+  message   String
+  context   Json?
+  createdAt DateTime     @default(now()) @db.Timestamptz(6)
+  @@index([runId])
+}
+
+// ---------- World ----------
+model Region {
+  id       Int        @id @default(autoincrement())
+  code     String     @unique
+  name     String
+  kind     RegionKind
+  maxLevel Int
+  servers  Server[]
+}
+
+model Server {
+  id             Int         @id @default(autoincrement())
+  regionId       Int
+  region         Region      @relation(fields: [regionId], references: [id])
+  sourceServerId String
+  name           String
+  faction        Faction?
+  characters     Character[]
+  @@unique([regionId, sourceServerId])
+  @@index([regionId])
+}
+
+// ---------- Characters ----------
+model Character {
+  id                Int                 @id @default(autoincrement())
+  serverId          Int
+  server            Server              @relation(fields: [serverId], references: [id])
+  sourceCharacterId String
+  name              String
+  class             String
+  faction           Faction?
+  level             Int
+  combatPower       Int?
+  itemLevel         Int?
+  portraitUrl       String?
+  lastSeenAt        DateTime            @db.Timestamptz(6)
+  lastSuccessAt     DateTime?           @db.Timestamptz(6)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+  snapshots         CharacterSnapshot[]
+  rankings          CharacterRanking[]
+
+  @@unique([serverId, sourceCharacterId])
+  @@index([name])
+  @@index([serverId, class])
+  @@index([level(sort: Desc)])
+  @@index([combatPower(sort: Desc)])
+  @@index([itemLevel(sort: Desc)])
+  @@index([lastSuccessAt])
+}
+
+model CharacterSnapshot {
+  id            Int                  @id @default(autoincrement())
+  characterId   Int
+  character     Character            @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  runId         Int
+  run           IngestionRun         @relation(fields: [runId], references: [id])
+  capturedAt    DateTime             @default(now()) @db.Timestamptz(6)
+  contentHash   String
+  level         Int
+  combatPower   Int?
+  itemLevel     Int?
+  extras        Json?
+  rawPayload    Json?
+  equipment     CharacterEquipment[]
+  skills        CharacterSkill[]
+  stats         CharacterStat[]
+
+  @@unique([characterId, contentHash])
+  @@index([characterId, capturedAt(sort: Desc)])
+}
+
+// ---------- Static game data ----------
+model Item {
+  id           Int                  @id @default(autoincrement())
+  sourceId     Int
+  source       DataSource           @relation(fields: [sourceId], references: [id])
+  sourceItemId String
+  name         String
+  slot         String?
+  rarity       String?
+  itemLevel    Int?
+  iconUrl      String?
+  description  String?
+  attributes   Json?
+  equipped     CharacterEquipment[]
+  @@unique([sourceId, sourceItemId])
+  @@index([name])
+}
+
+model Skill {
+  id            Int              @id @default(autoincrement())
+  sourceId      Int
+  source        DataSource       @relation(fields: [sourceId], references: [id])
+  sourceSkillId String
+  name          String
+  type          String?
+  iconUrl       String?
+  description   String?
+  details       Json?
+  characters    CharacterSkill[]
+  @@unique([sourceId, sourceSkillId])
+}
+
+// ---------- Per-snapshot character state ----------
+model CharacterEquipment {
+  id          Int               @id @default(autoincrement())
+  snapshotId  Int
+  snapshot    CharacterSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  itemId      Int
+  item        Item              @relation(fields: [itemId], references: [id])
+  slot        String
+  enhancement Int               @default(0)
+  details     Json?
+  @@unique([snapshotId, slot])
+}
+
+model CharacterSkill {
+  id         Int               @id @default(autoincrement())
+  snapshotId Int
+  snapshot   CharacterSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  skillId    Int
+  skill      Skill             @relation(fields: [skillId], references: [id])
+  level      Int
+  equipped   Boolean           @default(false)
+  @@unique([snapshotId, skillId])
+}
+
+model CharacterStat {
+  id         Int               @id @default(autoincrement())
+  snapshotId Int
+  snapshot   CharacterSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  group      String
+  key        String
+  value      Decimal           @db.Decimal(18, 4)
+  @@unique([snapshotId, group, key])
+}
+
+// ---------- Rankings ----------
+model LeaderboardSnapshot {
+  id          Int                @id @default(autoincrement())
+  metric      String
+  scope       String
+  scopeKey    String             @default("")
+  origin      String
+  coveragePct Float?
+  capturedAt  DateTime           @default(now()) @db.Timestamptz(6)
+  entries     CharacterRanking[]
+  @@index([metric, scope, scopeKey, capturedAt(sort: Desc)])
+}
+
+model CharacterRanking {
+  id            Int                 @id @default(autoincrement())
+  snapshotId    Int
+  snapshot      LeaderboardSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  characterId   Int
+  character     Character           @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  rank          Int
+  value         Int
+  @@unique([snapshotId, characterId])
+  @@index([snapshotId, rank])
+  @@index([characterId])
+}
